@@ -1,0 +1,17 @@
+## X-Curse-Project-ID: 1697183
+## Interface: 110002
+## Title: QuestMobAutoMarker
+## Notes: Auto-marks quest mobs with raid icons.
+## Author: Extr3m
+## Version: 1.2
+## OptionalDeps: Questie
+## SavedVariables: QuestMobAutoMarkerDB
+
+# Required Libraries
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\lib.xml
+
+# Addon Files
+Config.lua
+Core.lua
+GUI.lua
