@@ -3,8 +3,8 @@
 ## Title: QuestMobAutoMarker
 ## Notes: Auto-marks quest mobs with raid icons.
 ## Author: Extr3m
-## Version: 1.2.1
-## OptionalDeps: Questie
+## Version: 1.3.0
+## Dependencies: Questie
 ## SavedVariables: QuestMobAutoMarkerDB
 
 # Required Libraries

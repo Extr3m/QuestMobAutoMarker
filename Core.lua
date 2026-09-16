@@ -7,6 +7,7 @@ frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_TARGET_CHANGED")
 frame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
 frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+frame:RegisterEvent("QUEST_LOG_UPDATE")
 
 local currentMarkerIndex = 1
 local markedGUIDs = {}
@@ -27,44 +28,149 @@ function addon.ResetMarkerIndex()
     lastProcessedGUID = nil
 end
 
+local activeNpcCache = {}
+
+-- Safely retrieve Questie modules through QuestieLoader or global scope
+local function GetQuestieModule(moduleName)
+    if QuestieLoader and QuestieLoader.ImportModule then
+        local success, module = pcall(QuestieLoader.ImportModule, QuestieLoader, moduleName)
+        if success and module then return module end
+    end
+    return _G[moduleName]
+end
+
+-- Register NPC ID into cache
+local function RegisterNpcId(npcId)
+    local id = tonumber(npcId)
+    if id and id > 0 then
+        activeNpcCache[id] = true
+    end
+end
+
+-- Rebuild quest mob cache using Questie's active quest log
+local function RebuildQuestNpcCache()
+    wipe(activeNpcCache)
+
+    local QuestiePlayer = GetQuestieModule("QuestiePlayer")
+    local QuestieDB = GetQuestieModule("QuestieDB")
+
+    if not QuestiePlayer or not QuestiePlayer.currentQuestlog then return end
+
+    for questId, quest in pairs(QuestiePlayer.currentQuestlog) do
+        if quest then
+            local objectives = quest.Objectives or quest.ObjectiveData or quest.objectives
+            if type(objectives) == "table" then
+                for _, objective in pairs(objectives) do
+                    -- Check boolean completion status
+                    local isCompleted = objective.Completed or objective.completed
+
+                    -- Explicitly verify numeric objective progress (e.g., 4/4)
+                    if not isCompleted and objective.Needed and objective.Collected then
+                        local needed = tonumber(objective.Needed)
+                        local collected = tonumber(objective.Collected)
+                        if needed and collected and needed > 0 and collected >= needed then
+                            isCompleted = true
+                        end
+                    end
+
+                    if isCompleted == nil and objective.IsComplete then
+                        isCompleted = objective:IsComplete()
+                    end
+
+                    -- Only register unfinished objectives into the active cache
+                    if not isCompleted then
+                        local objType = objective.Type or objective.type
+                        local objId = objective.Id or objective.id
+
+                        -- 1. Direct Kill Objectives
+                        if objType == "monster" then
+                            RegisterNpcId(objId)
+
+                            -- Register secondary spawn IDs for this monster
+                            if type(objective.spawnList) == "table" then
+                                for spawnNpcId, _ in pairs(objective.spawnList) do
+                                    RegisterNpcId(spawnNpcId)
+                                end
+                            end
+
+                            if type(objective.monsterList) == "table" then
+                                for k, v in pairs(objective.monsterList) do
+                                    RegisterNpcId(v)
+                                    RegisterNpcId(k)
+                                end
+                            end
+                        end
+
+                        -- 2. Item/Loot Objectives
+                        if objType == "item" and objId then
+                            local itemData = nil
+                            if QuestieDB and QuestieDB.GetItem then
+                                itemData = QuestieDB:GetItem(objId)
+                            elseif QuestieDB and QuestieDB.itemData then
+                                itemData = QuestieDB.itemData[objId]
+                            end
+
+                            if itemData then
+                                local npcDrops = itemData.npcDrops or itemData.NpcDrops
+                                if not npcDrops and QuestieDB and QuestieDB.itemKeys then
+                                    local dropKey = QuestieDB.itemKeys.npcDrops or 2
+                                    npcDrops = itemData[dropKey]
+                                elseif not npcDrops and type(itemData) == "table" then
+                                    npcDrops = itemData[2]
+                                end
+
+                                if type(npcDrops) == "table" then
+                                    for _, dropNpcId in ipairs(npcDrops) do
+                                        RegisterNpcId(dropNpcId)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Checks if targeted NPC is an active, incomplete quest target
+local function IsActiveQuestieMob(unit, guid, npcId)
+    -- Fast $O(1)$ Cache Lookup (Strictly controlled by RebuildQuestNpcCache)
+    if npcId and activeNpcCache[npcId] then
+        return true
+    end
+    return false
+end
+
+-- Extract NPC ID directly from unit GUID
+local function GetNpcIdFromGUID(guid)
+    if not guid then return nil end
+    local unitType, _, _, _, _, npcId = strsplit("-", guid)
+    if (unitType == "Creature" or unitType == "Vehicle") and npcId then
+        return tonumber(npcId)
+    end
+    return nil
+end
+
 -- Evaluation and marking logic
 local function EvaluateAndMarkUnit(unit)
     if QuestMobAutoMarkerDB and not QuestMobAutoMarkerDB.enabled then return end
 
-    -- Condition Check 1: In Combat
-    if QuestMobAutoMarkerDB.disableInCombat and UnitAffectingCombat("player") then
-        return
-    end
+    if QuestMobAutoMarkerDB.disableInCombat and UnitAffectingCombat("player") then return end
 
-    -- Condition Check 2: In Dungeons/Raids
     if QuestMobAutoMarkerDB.disableInInstances then
         local inInstance, instanceType = IsInInstance()
-        if inInstance and (instanceType == "party" or instanceType == "raid") then
-            return
-        end
+        if inInstance and (instanceType == "party" or instanceType == "raid") then return end
     end
 
-    -- Condition Check 3: In Party/Raid Group
-    if QuestMobAutoMarkerDB.disableInParty and (IsInGroup() or IsInRaid()) then
-        return
-    end
+    if QuestMobAutoMarkerDB.disableInParty and (IsInGroup() or IsInRaid()) then return end
 
-    -- MASTER TOGGLE CHECK: Exit if addon is disabled
-    if QuestMobAutoMarkerDB and not QuestMobAutoMarkerDB.enabled then
-        return
-    end
-
-    if not UnitExists(unit) or not UnitCanAttack("player", unit) or UnitIsDead(unit) then
-        return
-    end
+    if not UnitExists(unit) or not UnitCanAttack("player", unit) or UnitIsDead(unit) then return end
 
     local guid = UnitGUID(unit)
-    if not guid then return end
+    if not guid or guid == lastProcessedGUID then return end
 
-    if guid == lastProcessedGUID then
-        return
-    end
-
+    -- Skip if unit already has a raid target icon
     if GetRaidTargetIndex(unit) ~= nil then
         markedGUIDs[guid] = true
         lastProcessedGUID = guid
@@ -74,31 +180,8 @@ local function EvaluateAndMarkUnit(unit)
     local activeMarkers = addon.Config.GetActiveMarkers()
     if #activeMarkers == 0 then return end
 
-    local isQuestMob = false
-
-    -- 1. Check Questie API
-    if QuestieTooltips and QuestieTooltips.GetTooltip then
-        local qData = QuestieTooltips:GetTooltip("unit", guid)
-        if qData and #qData > 0 then
-            isQuestMob = true
-        end
-    end
-
-    -- 2. Tooltip line scan fallback
-    if not isQuestMob then
-        for i = 1, GameTooltip:NumLines() do
-            local lineText = _G["GameTooltipTextLeft" .. i]:GetText()
-            if lineText then
-                if string.find(lineText, "%d+/%d+") or string.find(lineText, "%%") then
-                    isQuestMob = true
-                    break
-                end
-            end
-        end
-    end
-
-    -- 3. Apply mark ONLY to unmarked quest mobs
-    if isQuestMob then
+    local npcId = GetNpcIdFromGUID(guid)
+    if IsActiveQuestieMob(unit, guid, npcId) then
         lastProcessedGUID = guid
 
         if currentMarkerIndex > #activeMarkers then
@@ -106,7 +189,6 @@ local function EvaluateAndMarkUnit(unit)
         end
 
         local selectedMarker = activeMarkers[currentMarkerIndex]
-
         SetRaidTarget(unit, selectedMarker)
         markedGUIDs[guid] = true
 
@@ -166,7 +248,7 @@ local function ScanForBossTarget()
     if CheckAndMarkBossUnit("focus") then return end
     if CheckAndMarkBossUnit("mouseover") then return end
 
--- Check active visible Nameplates
+    -- Check active visible Nameplates
     local nameplates = C_NamePlate.GetNamePlates()
     for _, nameplate in ipairs(nameplates) do
         local unit = nameplate.namePlateUnitToken or (nameplate.UnitFrame and nameplate.UnitFrame["unit"])
@@ -206,7 +288,6 @@ local function CleanMobNameFromObjective(text)
 end
 
 function addon.GetAutoBossTargetFromQuestLog()
-    -- Ensure C_QuestLog exists
     if not C_QuestLog or not C_QuestLog.GetNumQuestLogEntries then return nil end
 
     local numEntries = C_QuestLog.GetNumQuestLogEntries() or 0
@@ -287,34 +368,41 @@ end
 
 -- Main Event Handler
 frame:SetScript("OnEvent", function(self, event, ...)
-if event == "ADDON_LOADED" then
-    local loadedAddon = ...
-    if loadedAddon == addonName then
-        if not QuestMobAutoMarkerDB then
-            QuestMobAutoMarkerDB = addon.Config.defaultDB
-        else
-            -- Ensure master toggle is strictly boolean
-            if QuestMobAutoMarkerDB.enabled == nil then
-                QuestMobAutoMarkerDB.enabled = true
+    if event == "ADDON_LOADED" then
+        local loadedAddon = ...
+        if loadedAddon == addonName then
+            if not QuestMobAutoMarkerDB then
+                QuestMobAutoMarkerDB = addon.Config.defaultDB
+            else
+                if QuestMobAutoMarkerDB.enabled == nil then
+                    QuestMobAutoMarkerDB.enabled = true
+                end
+
+                for key, value in pairs(addon.Config.defaultDB) do
+                    if key ~= "enabledMarkers" and QuestMobAutoMarkerDB[key] == nil then
+                        QuestMobAutoMarkerDB[key] = value
+                    end
+                end
+                
+                for k, v in pairs(addon.Config.defaultDB.enabledMarkers) do
+                    if QuestMobAutoMarkerDB.enabledMarkers[k] == nil then
+                        QuestMobAutoMarkerDB.enabledMarkers[k] = v
+                    end
+                end
             end
 
-            -- Check and apply top-level default settings if missing
-            for key, value in pairs(addon.Config.defaultDB) do
-                if key ~= "enabledMarkers" and QuestMobAutoMarkerDB[key] == nil then
-                    QuestMobAutoMarkerDB[key] = value
-                end
+            -- Allow Questie to initialize before building cache
+            if C_Timer and C_Timer.After then
+                C_Timer.After(3, RebuildQuestNpcCache)
+            else
+                RebuildQuestNpcCache()
             end
-            
-            -- Check and apply marker defaults if missing
-            for k, v in pairs(addon.Config.defaultDB.enabledMarkers) do
-                if QuestMobAutoMarkerDB.enabledMarkers[k] == nil then
-                    QuestMobAutoMarkerDB.enabledMarkers[k] = v
-                end
-            end
+
+            print("|cFF00FF00[QuestMobAutoMarker]|r Loaded! Type |cFFFFD100/automark|r or |cFFFFD100/am|r for options.")
         end
-        print("|cFF00FF00[QuestMobAutoMarker]|r Loaded! Type |cFFFFD100/automark|r or |cFFFFD100/am|r for options.")
-    end
-elseif event == "PLAYER_TARGET_CHANGED" then
+    elseif event == "QUEST_LOG_UPDATE" then
+        RebuildQuestNpcCache()
+    elseif event == "PLAYER_TARGET_CHANGED" then
         lastProcessedGUID = nil
         EvaluateAndMarkUnit("target")
     elseif event == "UPDATE_MOUSEOVER_UNIT" then
@@ -323,3 +411,14 @@ elseif event == "PLAYER_TARGET_CHANGED" then
         HandleUnitDeath()
     end
 end)
+
+SLASH_QUESTMOBAUTOMARKER1 = "/qmamdebug"
+SlashCmdList["QUESTMOBAUTOMARKER"] = function()
+    RebuildQuestNpcCache()
+    local count = 0
+    for _ in pairs(activeNpcCache) do count = count + 1 end
+    
+    local qPlayer = GetQuestieModule("QuestiePlayer") ~= nil
+    print(string.format("|cFF00FF00[QMAM Debug]|r Questie Log Access: %s | Cached Mobs: %d", 
+        qPlayer and "OK" or "FAIL", count))
+end
