@@ -293,6 +293,11 @@ if event == "ADDON_LOADED" then
         if not QuestMobAutoMarkerDB then
             QuestMobAutoMarkerDB = addon.Config.defaultDB
         else
+            -- Ensure master toggle is strictly boolean
+            if QuestMobAutoMarkerDB.enabled == nil then
+                QuestMobAutoMarkerDB.enabled = true
+            end
+
             -- Check and apply top-level default settings if missing
             for key, value in pairs(addon.Config.defaultDB) do
                 if key ~= "enabledMarkers" and QuestMobAutoMarkerDB[key] == nil then

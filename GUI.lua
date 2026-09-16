@@ -349,8 +349,6 @@ local function RefreshUI()
     bossCB:SetChecked(QuestMobAutoMarkerDB.bossTargetEnabled)
     nameInput:SetText(QuestMobAutoMarkerDB.bossTargetName or "")
     SetDropdownSelectedMarker(QuestMobAutoMarkerDB.bossTargetMarker or 8)
-    
-    SelectTab(1)
 end
 
 local function ToggleConfigWindow()
@@ -361,6 +359,14 @@ local function ToggleConfigWindow()
         configFrame:Show()
     end
 end
+
+-- Force an initial background refresh so checkboxes match saved variables immediately on login
+local initFrame = CreateFrame("Frame")
+initFrame:RegisterEvent("PLAYER_LOGIN")
+initFrame:SetScript("OnEvent", function()
+    RefreshUI()
+    SelectTab(1)
+end)
 
 -- Slash Commands Registration
 SLASH_AUTOMARK1 = "/automark"
