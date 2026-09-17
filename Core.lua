@@ -318,9 +318,9 @@ local LDB = LibStub and LibStub:GetLibrary("LibDataBroker-1.1", true)
 local LDBIcon = LibStub and LibStub:GetLibrary("LibDBIcon-1.0", true)
 
 if LDB and LDBIcon then
-    local minimapBroker = LDB:NewDataObject("QuestMobAutoMarkerForever", {
+    local minimapBroker = LDB:NewDataObject("QuestMobAutoMarker", {
         type = "data source",
-        text = "QuestMobAutoMarkerForever",
+        text = "QuestMobAutoMarker",
         icon = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8",
         OnClick = function(self, button)
             if button == "LeftButton" then
@@ -339,12 +339,12 @@ if LDB and LDBIcon then
                 if QuestMobAutoMarkerDB then
                     QuestMobAutoMarkerDB.enabled = not QuestMobAutoMarkerDB.enabled
                     local status = QuestMobAutoMarkerDB.enabled and "|cff00ff00Enabled|r" or "|cffff0000Disabled|r"
-                    print("|cff00ff00[QuestMobAutoMarkerForever]|r Status: " .. status)
+                    print("|cff00ff00[QuestMobAutoMarker]|r Status: " .. status)
                 end
             end
         end,
         OnTooltipShow = function(tooltip)
-            tooltip:AddLine("QuestMobAutoMarkerForever")
+            tooltip:AddLine("QuestMobAutoMarker")
             tooltip:AddLine("|cff00ff00Left-Click:|r Toggle Options Panel", 0.8, 0.8, 0.8)
             tooltip:AddLine("|cff00ff00Right-Click:|r Toggle Addon On/Off", 0.8, 0.8, 0.8)
         end,
@@ -361,7 +361,7 @@ if LDB and LDBIcon then
             if not QuestMobAutoMarkerDB.minimap then
                 QuestMobAutoMarkerDB.minimap = { hide = false }
             end
-            LDBIcon:Register("QuestMobAutoMarkerForever", minimapBroker, QuestMobAutoMarkerDB.minimap)
+            LDBIcon:Register("QuestMobAutoMarker", minimapBroker, QuestMobAutoMarkerDB.minimap)
         end
     end)
 end
