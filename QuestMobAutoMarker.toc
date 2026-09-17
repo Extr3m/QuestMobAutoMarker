@@ -1,4 +1,4 @@
-## X-Curse-Project-ID: 1697183
+## X-Curse-Project-ID: 1699515
 ## Interface: 16001
 ## Title: QuestMobAutoMarkerForever
 ## Notes: Auto-marks quest mobs with raid icons.
