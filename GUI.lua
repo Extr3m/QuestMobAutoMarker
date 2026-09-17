@@ -207,7 +207,7 @@ autoBtn:SetText("Auto-Detect")
 
 autoBtn:SetScript("OnClick", function()
     if type(addon.GetAutoBossTargetFromQuestLog) ~= "function" then
-        print("|cffff0000[QuestMobAutoMarker]|r Core logic not loaded yet.")
+        print("|cffff0000[QuestMobAutoMarkerForever]|r Core logic not loaded yet.")
         return
     end
 
@@ -217,9 +217,9 @@ autoBtn:SetScript("OnClick", function()
         if QuestMobAutoMarkerDB then
             QuestMobAutoMarkerDB.bossTargetName = detectedName
         end
-        print("|cff00ff00[QuestMobAutoMarker]|r Detected target: " .. detectedName)
+        print("|cff00ff00[QuestMobAutoMarkerForever]|r Detected target: " .. detectedName)
     else
-        print("|cffff0000[QuestMobAutoMarker]|r No target name found in quest log.")
+        print("|cffff0000[QuestMobAutoMarkerForever]|r No target name found in quest log.")
     end
 end)
 
